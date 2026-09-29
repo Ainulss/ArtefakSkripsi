@@ -6,7 +6,7 @@ def render():
     st.markdown(
         """
 <div class="footer-container">
-Skripsi Ainul Fatimah 222212468
+Optimalisasi Proxy Means Test Pada Kondisi Small Sample Size - Ainul Fatimah - 222212468
 </div>
 """,
         unsafe_allow_html=True,
