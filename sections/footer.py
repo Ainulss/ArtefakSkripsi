@@ -6,7 +6,7 @@ def render():
     st.markdown(
         """
 <div class="footer-container">
-© 2026 Optimalisasi Proxy Means Test pada Kondisi Small Sample Size. All rights reserved.
+Skripsi Ainul Fatimah 222212468
 </div>
 """,
         unsafe_allow_html=True,
