@@ -74,7 +74,13 @@ PETA_DASAR = [
 #   ("Esri.WorldImagery", "Citra satelit (Esri)"),
 
 WARNA_LATAR_PETA = "#eef2f6"   # warna latar kalau tanpa peta dasar
-WARNA_WILAYAH = "#3b7fbf"      # warna wilayah yang punya data
+# ---------------- Warna gradasi peta ----------------
+# Warna wilayah mengikuti nilai metrik terpilih pada skema & model di bawah ini:
+# nilai makin rendah -> kuning, makin tinggi -> merah.
+SKEMA_WARNA = "P V1"
+MODEL_WARNA = "TabPFN"
+GRADASI_WARNA = ["#ffffb2", "#fecc5c", "#fd8d3c", "#f03b20", "#bd0026"]   # rendah -> tinggi
+WARNA_WILAYAH = "#3b7fbf"      # (tidak dipakai lagi; warna kini mengikuti gradasi)
 WARNA_TANPA_DATA = "#c7ccd3"   # warna wilayah yang tidak ada di file Excel
 TRANSPARANSI_WARNA = 0.85      # 0 = bening, 1 = pekat
 WARNA_GARIS_BATAS = "#333333"  # garis batas antar wilayah
@@ -280,6 +286,46 @@ def _html_popup(props: dict, baris: pd.DataFrame, metrik_grup: list) -> str:
 # ==========================================================
 # PETA
 # ==========================================================
+def _hex_ke_rgb(h: str):
+    h = h.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _warna_gradasi(nilai: float, vmin: float, vmax: float) -> str:
+    """Warna dari GRADASI_WARNA sesuai posisi nilai di antara vmin dan vmax."""
+    t = 0.5 if vmax == vmin else min(max((nilai - vmin) / (vmax - vmin), 0), 1)
+    posisi = t * (len(GRADASI_WARNA) - 1)
+    i = min(int(posisi), len(GRADASI_WARNA) - 2)
+    a, b = _hex_ke_rgb(GRADASI_WARNA[i]), _hex_ke_rgb(GRADASI_WARNA[i + 1])
+    f = posisi - i
+    return "#" + "".join(f"{round(x + (y - x) * f):02x}" for x, y in zip(a, b))
+
+
+def _nilai_warna(hasil: pd.DataFrame, metrik: str) -> dict:
+    """{kode: nilai} untuk metrik terpilih pada SKEMA_WARNA & MODEL_WARNA."""
+    d = hasil[
+        (hasil["metrik"] == metrik)
+        & (hasil["skema"].str.strip().str.lower() == SKEMA_WARNA.strip().lower())
+        & (hasil["model"].str.strip().str.lower() == MODEL_WARNA.strip().lower())
+    ].dropna(subset=["nilai"])
+    return d.groupby("kode")["nilai"].first().to_dict()
+
+
+def _legenda(metrik: str, vmin: float, vmax: float) -> str:
+    batang = ", ".join(GRADASI_WARNA)
+    return f"""
+<div style="position:absolute; left:12px; bottom:22px; z-index:9999; background:rgba(255,255,255,.92);
+            padding:8px 12px; box-shadow:0 1px 4px rgba(0,0,0,.25);
+            font:12px 'Segoe UI',Arial,sans-serif; color:#1f2937;">
+  <div style="font-weight:700; margin-bottom:4px;">{html.escape(metrik)} ({html.escape(SKEMA_WARNA)}, {html.escape(MODEL_WARNA)})</div>
+  <div style="width:220px; height:12px; background:linear-gradient(to right, {batang});
+              border:1px solid #9ca3af;"></div>
+  <div style="display:flex; justify-content:space-between; margin-top:2px;">
+    <span>{_angka(vmin, metrik)}</span><span>{_angka(vmax, metrik)}</span>
+  </div>
+</div>"""
+
+
 def _titik_tengah(geometry: dict) -> tuple[float, float]:
     """Titik tengah (centroid) poligon terbesar, untuk posisi label nama wilayah."""
     polys = geometry["coordinates"] if geometry["type"] == "MultiPolygon" else [geometry["coordinates"]]
@@ -299,11 +345,17 @@ def _titik_tengah(geometry: dict) -> tuple[float, float]:
 def _buat_peta(geojson: dict, hasil: pd.DataFrame, metrik_grup: list) -> folium.Map:
     per_kode = {k: g for k, g in hasil.groupby("kode")}
     kosong = hasil.iloc[0:0]
+    metrik_utama = metrik_grup[0]
+    nilai_warna = _nilai_warna(hasil, metrik_utama)
+    vmin = min(nilai_warna.values()) if nilai_warna else 0
+    vmax = max(nilai_warna.values()) if nilai_warna else 0
     gj = copy.deepcopy(geojson)
     for f in gj["features"]:
         p = f["properties"]
         baris = per_kode.get(p[KOLOM_KODE], kosong)
-        p["_ada"] = not baris.empty
+        v = nilai_warna.get(p[KOLOM_KODE])
+        p["_warna"] = _warna_gradasi(v, vmin, vmax) if v is not None else WARNA_TANPA_DATA
+        p["_nilai"] = _angka(v, metrik_utama)
         p["_html"] = _html_popup(p, baris, metrik_grup)
 
     m = folium.Map(
@@ -353,7 +405,7 @@ def _buat_peta(geojson: dict, hasil: pd.DataFrame, metrik_grup: list) -> folium.
 
     def style(feature):
         return {
-            "fillColor": WARNA_WILAYAH if feature["properties"]["_ada"] else WARNA_TANPA_DATA,
+            "fillColor": feature["properties"]["_warna"],
             "fillOpacity": TRANSPARANSI_WARNA,
             "color": WARNA_GARIS_BATAS,
             "weight": 1,
@@ -365,8 +417,9 @@ def _buat_peta(geojson: dict, hasil: pd.DataFrame, metrik_grup: list) -> folium.
         style_function=style,
         highlight_function=lambda f: {"weight": 2.5, "color": "#0d1b2a"},
         tooltip=folium.GeoJsonTooltip(
-            fields=[KOLOM_WILAYAH, *(["provinsi"] if ada_prov else [])],
-            aliases=["Wilayah", *(["Provinsi"] if ada_prov else [])],
+            fields=[KOLOM_WILAYAH, *(["provinsi"] if ada_prov else []), "_nilai"],
+            aliases=["Wilayah", *(["Provinsi"] if ada_prov else []),
+                     f"{metrik_utama} ({SKEMA_WARNA}, {MODEL_WARNA})"],
             sticky=True,
         ),
         popup=folium.GeoJsonPopup(fields=["_html"], labels=False, max_width=900),
@@ -407,6 +460,8 @@ def _buat_peta(geojson: dict, hasil: pd.DataFrame, metrik_grup: list) -> folium.
         position="topleft",
     ).add_to(m)
     folium.LayerControl(position="topright", collapsed=True).add_to(m)
+    if nilai_warna:
+        m.get_root().html.add_child(folium.Element(_legenda(metrik_utama, vmin, vmax)))
 
     # Zoom otomatis ke seluruh wilayah yang ditampilkan
     lons, lats = [], []
