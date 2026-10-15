@@ -25,7 +25,7 @@ Hasil penggabungan data antarwilayah untuk setiap pendekatan disajikan pada tabe
 # Tab: (nama tab, file Excel di folder data/, jumlah baris header)
 TAB_PENGGABUNGAN = [
     ("Clustering", DATA_DIR / "klaster.xlsx", 3),
-    ("Pooling", DATA_DIR / "pooling.xlsx", 3),
+    ("Pooling", DATA_DIR / "pooling.xlsx", 1),
 ]
 
 # ---------------- 2. MODELING DAN EVALUASI PMT ----------------
